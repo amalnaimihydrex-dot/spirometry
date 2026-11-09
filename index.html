@@ -482,9 +482,9 @@ h1,h2,h3{font-family:var(--fd);margin:0;letter-spacing:-.01em}
    ========================================================= */
 const CONFIG = {
   salon: "MEDICA 2026",
-  // Every contact is emailed (free, unlimited) to this address via FormSubmit.co.
+  // Every contact is emailed (free, unlimited) to this address via FormSubmit.co, with a line ready to paste in Excel.
   // The very first submission sends an activation email to this inbox: click "Activate" once.
-  notifyEmail: "respiorder@hydrex.fr",
+  notifyEmail: "Marwen.Charfeddine@groupepec.com",
   manualUrl: "",            // SPIRO-BALL full user manual PDF (to be added)
   manualUrlTri: "",         // TRI-BALL full user manual PDF (to be added)
   staffPin: "5530",         // staff panel: press and hold the Hydrex logo for 2 s
@@ -1062,13 +1062,16 @@ const COLS=["Date","Salon","Prénom","Nom","Qualité / Fonction","Établissement
 function db(){return store.get("contacts",[])}
 function saveDb(a){store.set("contacts",a)}
 
-async function sendEmail(rec){
+const KEYS={"Date":"date","Salon":"salon","Prénom":"firstName","Nom":"lastName","Qualité / Fonction":"job","Établissement":"org","Pays":"country","Email":"email","Téléphone":"phone","Besoin / Commentaire":"need","Produit":"product","Référence":"ref","Essai":"trial","Carnet":"diary","Langue":"lang"};
+async function sendFlow(rec){
   if(!CONFIG.notifyEmail) return false;
-  const body={_subject:`${CONFIG.salon} · Spirométrie · ${rec["Prénom"]} ${rec["Nom"]} · ${rec["Produit"]}`,_template:"table",_captcha:"false"};
-  COLS.forEach(c=>{ if(c!=="Envoi email") body[c]=rec[c]||"" });
-  body._replyto=rec["Email"];
+  const body={_subject:`${CONFIG.salon} · Contact Spirométrie · ${rec["Prénom"]||""} ${rec["Nom"]||""} · ${rec["Produit"]||""}`,_template:"table",_captcha:"false"};
+  for(const c in KEYS) body[c]=String(rec[c]||"");
+  // one tab-separated line: copy it and paste it into the Excel list (one cell = one column)
+  body["Ligne Excel (copier-coller)"]=Object.keys(KEYS).map(c=>String(rec[c]||"").replace(/[\t\n\r]+/g," ")).join("\t");
+  if(rec["Email"]) body._replyto=rec["Email"];
   try{
-    const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),9000);
+    const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),12000);
     const r=await fetch("https://formsubmit.co/ajax/"+encodeURIComponent(CONFIG.notifyEmail),{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body),signal:ctl.signal});
     clearTimeout(to);
     const j=await r.json().catch(()=>({}));
@@ -1077,7 +1080,7 @@ async function sendEmail(rec){
 }
 async function flushQueue(){
   const a=db(); let changed=false;
-  for(const rec of a){ if(rec["Envoi email"]!=="OK"){ const ok=await sendEmail(rec); if(ok){rec["Envoi email"]="OK";changed=true} } }
+  for(const rec of a){ if(rec["Envoi email"]!=="OK"){ const ok=await sendFlow(rec); if(ok){rec["Envoi email"]="OK";changed=true} } }
   if(changed) saveDb(a);
   return a.filter(r=>r["Envoi email"]!=="OK").length;
 }
@@ -1102,7 +1105,7 @@ async function submit(){
     "Produit":productLabel(),"Référence":productRef(),"Essai":tryLabel(),"Carnet":days,"Langue":S.lang.toUpperCase(),"Envoi email":"En attente"
   };
   const a=db(); a.push(rec); saveDb(a);
-  const ok=await sendEmail(rec);
+  const ok=await sendFlow(rec);
   if(ok){ rec["Envoi email"]="OK"; const b=db(); b[b.length-1]=rec; saveDb(b); toast(t("sent_ok")); } else toast(t("saved_local"));
   nb.disabled=false;
   S.lastName=rec["Prénom"];
@@ -1158,17 +1161,16 @@ function staffMain(){
   const p=$("#staffPanel");
   p.innerHTML=`<h3>Espace équipe Hydrex</h3>
    <div class="kpi"><div><b>${a.length}</b><small>contacts sur cet appareil</small></div><div><b>${a.filter(r=>(r.Date||"").startsWith(today)).length}</b><small>aujourd'hui</small></div><div><b>${pending}</b><small>email en attente</small></div></div>
-   <div class="row"><button class="btn pri sm" id="stExport">Exporter Excel (.csv)</button><button class="btn ghost sm" id="stRetry">Renvoyer les emails en attente</button></div>
+   <div class="row"><button class="btn pri sm" id="stExport">Exporter la liste (Excel .csv)</button><button class="btn ghost sm" id="stRetry">Renvoyer les emails en attente</button></div>
    <p class="muted">Colonnes identiques à la liste contacts salons : Salon, Prénom, Nom, Qualité / Fonction, Établissement, Email, Téléphone, Besoin / Commentaire (+ produit, référence, essai, carnet).</p>
    <label class="consent"><input type="checkbox" id="stKiosk" ${S.kiosk?"checked":""}><span>Mode borne (tablette du stand) : retour automatique à l'accueil après ${CONFIG.idleSeconds} s d'inactivité</span></label>
-   <div class="field"><label>Adresse qui reçoit chaque contact par email</label><input id="stMail" value="${CONFIG.notifyEmail}"></div>
+   <p class="muted">Chaque contact est aussi envoyé par email à <b>${CONFIG.notifyEmail}</b>.</p>
    <div class="row"><button class="btn ghost sm" id="stTest">Envoyer un email test</button><span class="muted" id="stMsg"></span></div>
    <div class="row" style="justify-content:space-between;margin-top:6px"><button class="btn ghost sm danger" id="stClear">Effacer les contacts de cet appareil</button><button class="btn ghost sm" id="stClose">Fermer</button></div>`;
   $("#stExport").onclick=exportCSV;
   $("#stRetry").onclick=async()=>{$("#stMsg").textContent="Envoi…";const left=await flushQueue();$("#stMsg").textContent=left?left+" toujours en attente (connexion ?)":"Tout est envoyé ✓";};
   $("#stKiosk").onchange=e=>{S.kiosk=e.target.checked;store.set("kiosk",S.kiosk)};
-  $("#stMail").onchange=e=>{CONFIG.notifyEmail=e.target.value.trim();store.set("notifyEmail",CONFIG.notifyEmail)};
-  $("#stTest").onclick=async()=>{$("#stMsg").textContent="Envoi…";const ok=await sendEmail({"Prénom":"Test","Nom":"Hydrex","Produit":"Test","Email":CONFIG.notifyEmail,"Salon":CONFIG.salon,"Date":new Date().toLocaleString("fr-FR")});$("#stMsg").textContent=ok?"Envoyé ✓ (vérifiez la boîte)":"Échec : 1er envoi ? Activez le lien reçu par email, ou vérifiez la connexion.";};
+  $("#stTest").onclick=async()=>{$("#stMsg").textContent="Envoi…";const ok=await sendFlow({"Date":new Date().toLocaleString("fr-FR"),"Salon":CONFIG.salon,"Prénom":"TEST","Nom":"Hydrex","Produit":"Test","Email":"test@hydrex.fr"});$("#stMsg").textContent=ok?"Envoyé ✓ (vérifiez la boîte de réception)":"Échec : premier envoi ? Cliquez « Activate » dans le mail reçu, ou vérifiez la connexion.";};
   let armed=false;
   $("#stClear").onclick=e=>{ if(!armed){armed=true;e.currentTarget.textContent="Confirmer l'effacement ("+a.length+")";setTimeout(()=>{armed=false;const b=$("#stClear");if(b)b.textContent="Effacer les contacts de cet appareil"},4000);return} exportCSV(); saveDb([]); staffMain(); };
   $("#stClose").onclick=()=>$("#staff").classList.remove("show");
@@ -1183,7 +1185,6 @@ function exportCSV(){
 /* =========================================================
    INIT
    ========================================================= */
-CONFIG.notifyEmail = store.get("notifyEmail", CONFIG.notifyEmail);
 SIM.flowY=300;
 applyLang(); go("home");
 setTimeout(flushQueue,3000);
